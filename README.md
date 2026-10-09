@@ -1,4 +1,4 @@
-# IVM — Independent Virtual Machine for ARMv7
+# IVM — Impressive Virtual Machine for ARMv7
 
 **IVM** is a custom 32-bit virtual machine system and bytecode format built entirely in **Go**. It takes compiled ARMv7 ELF binaries (or object files), disassembles and translates their machine instructions into a custom-designed **IVM ISA bytecode**, packs them into a compressed `.ivm` container binary, and executes them via a custom virtual machine interpreter.
 
