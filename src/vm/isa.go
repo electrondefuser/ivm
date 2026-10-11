@@ -1,4 +1,4 @@
-package isa
+package vm
 
 import "fmt"
 
@@ -17,6 +17,11 @@ type Opcode uint8
  *	Byte 3: [RegSrc2: 4b][ShiftAmount: 4b]
  *	Byte 4..7: Immediate / Offset / Address (32-bit uint32)
  */
+const (
+	ArchARMv7 uint16 = 0x0001
+	ArchARMv8 uint16 = 0x0002
+)
+
 type Instruction struct {
 	Op          Opcode
 	Cond        uint8  /* 4 bits (0-15) */
@@ -24,9 +29,11 @@ type Instruction struct {
 	HasImm      bool   /* True if Imm field is active instead of RegSrc2 */
 	ShiftType   uint8  /* LSL, LSR, ASR, ROR */
 	ShiftAmount uint8  /* 0-31 */
-	RegDst      uint8  /* Target register (Rd) */
-	RegSrc1     uint8  /* Source register 1 (Rn) */
-	RegSrc2     uint8  /* Source register 2 (Rm) / RegMask for LDM/STM */
+	Is64Bit     bool   /* ARMv8: True for 64-bit (X reg), False for 32-bit (W reg) */
+	Arch        uint16 /* Target architecture: ArchARMv7 or ArchARMv8 */
+	RegDst      uint8  /* Target register (Rd: 0-31) */
+	RegSrc1     uint8  /* Source register 1 (Rn: 0-31) */
+	RegSrc2     uint8  /* Source register 2 (Rm: 0-31) */
 	Imm         uint32 /* 32-bit Immediate value / Offset / Branch target */
 }
 
@@ -114,6 +121,10 @@ const (
 	OpSVC     Opcode = 0x20
 	OpLDM     Opcode = 0x21
 	OpSTM     Opcode = 0x22
+	OpSTP     Opcode = 0x23
+	OpLDP     Opcode = 0x24
+	OpLDRL    Opcode = 0x25
+	OpESCAPE  Opcode = 0xFD
 	OpHALT    Opcode = 0xFE
 	OpILLEGAL Opcode = 0xFF
 )
@@ -191,9 +202,40 @@ func (op Opcode) String() string {
 		return "LDM"
 	case OpSTM:
 		return "STM"
+	case OpSTP:
+		return "STP"
+	case OpLDP:
+		return "LDP"
+	case OpLDRL:
+		return "LDR"
+	case OpESCAPE:
+		return "ESCAPE"
 	case OpHALT:
 		return "HALT"
 	default:
 		return fmt.Sprintf("UNK(0x%02X)", uint8(op))
+	}
+}
+
+// FormatReg8 returns string representation of ARMv8 64-bit/32-bit register
+func FormatReg8(r uint8, is64 bool) string {
+	if is64 {
+		switch r {
+		case 31:
+			return "sp"
+		case 30:
+			return "lr"
+		case 29:
+			return "fp"
+		default:
+			return fmt.Sprintf("x%d", r)
+		}
+	} else {
+		switch r {
+		case 31:
+			return "wsp"
+		default:
+			return fmt.Sprintf("w%d", r)
+		}
 	}
 }

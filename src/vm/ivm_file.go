@@ -1,4 +1,4 @@
-package format
+package vm
 
 import (
 	"bytes"
@@ -7,16 +7,12 @@ import (
 	"fmt"
 	"io"
 	"os"
-
-	"ivm/src/isa"
 )
 
 var (
 	ErrInvalidMagic    = errors.New("invalid .ivm magic header")
 	ErrUnsupportedArch = errors.New("unsupported architecture in IVM file")
 )
-
-const ArchARMv7 uint16 = 0x0001
 
 type Header struct {
 	Magic        [4]byte
@@ -43,7 +39,7 @@ type IVMFile struct {
 func (f *IVMFile) SaveToFile(filepath string) error {
 	buf := new(bytes.Buffer)
 
-	f.Header.Magic = isa.IVMMagic
+	f.Header.Magic = IVMMagic
 	f.Header.CodeSize = uint32(len(f.Bytecode))
 	f.Header.RawCodeSize = uint32(len(f.RawCode))
 	f.Header.DataSize = uint32(len(f.Data))
@@ -87,11 +83,11 @@ func LoadFromFile(filepath string) (*IVMFile, error) {
 		return nil, fmt.Errorf("corrupt IVM header: %w", err)
 	}
 
-	if f.Header.Magic != isa.IVMMagic {
+	if f.Header.Magic != IVMMagic {
 		return nil, ErrInvalidMagic
 	}
 
-	if f.Header.Arch != ArchARMv7 {
+	if f.Header.Arch != ArchARMv7 && f.Header.Arch != ArchARMv8 {
 		return nil, fmt.Errorf("%w: 0x%04X", ErrUnsupportedArch, f.Header.Arch)
 	}
 

@@ -2,7 +2,7 @@ package disasm_test
 
 import (
 	"ivm/src/disasm"
-	"ivm/src/format"
+	"ivm/src/vm"
 	"testing"
 )
 
@@ -10,7 +10,7 @@ func TestDisassembleIVM(t *testing.T) {
 	tests := []struct {
 		name string // description of this test case
 		// Named input parameters for target function.
-		ivmFile *format.IVMFile
+		ivmFile *vm.IVMFile
 		want    string
 		wantErr bool
 	}{

@@ -1,13 +1,12 @@
 package armv7
 
 import (
-	"fmt"
-	"ivm/src/isa"
+	"ivm/src/vm"
 )
 
 /* DecodedARM represents an ARMv7 instruction disassembled into intermediate representation */
 type DecodedARM struct {
-	Op          isa.Opcode
+	Op          vm.Opcode
 	Cond        uint8
 	SetFlags    bool
 	HasImm      bool
@@ -43,7 +42,7 @@ func DecodeARM32(raw uint32) (*DecodedARM, error) {
 
 	// 1. SVC / SWI (cond | 1111 | imm24)
 	if (raw & 0x0F000000) == 0x0F000000 {
-		dec.Op = isa.OpSVC
+		dec.Op = vm.OpSVC
 		dec.HasImm = true
 		dec.Imm = raw & 0x00FFFFFF
 		return dec, nil
@@ -53,9 +52,9 @@ func DecodeARM32(raw uint32) (*DecodedARM, error) {
 	if (raw & 0x0E000000) == 0x0A000000 {
 		link := (raw & 0x01000000) != 0
 		if link {
-			dec.Op = isa.OpBL
+			dec.Op = vm.OpBL
 		} else {
-			dec.Op = isa.OpB
+			dec.Op = vm.OpB
 		}
 		offset24 := raw & 0x00FFFFFF
 		relOffset := signExtend24(offset24) << 2
@@ -66,14 +65,14 @@ func DecodeARM32(raw uint32) (*DecodedARM, error) {
 
 	// 3. BX / BLX Register (cond | 0001 0010 1111 1111 1111 0001/0011 | Rm)
 	if (raw & 0x0FFFFFF0) == 0x012FFF10 {
-		dec.Op = isa.OpBX
+		dec.Op = vm.OpBX
 		dec.Rm = uint8(raw & 0x0F)
 		dec.Rn = dec.Rm
 		return dec, nil
 	}
 
 	if (raw & 0x0FFFFFF0) == 0x012FFF30 {
-		dec.Op = isa.OpBLX
+		dec.Op = vm.OpBLX
 		dec.Rm = uint8(raw & 0x0F)
 		dec.Rn = dec.Rm
 		return dec, nil
@@ -90,17 +89,17 @@ func DecodeARM32(raw uint32) (*DecodedARM, error) {
 		dec.Imm = uint32(regList)
 		dec.HasImm = true
 
-		if rn == isa.SP {
+		if rn == vm.SP {
 			if lBit {
-				dec.Op = isa.OpPOP
+				dec.Op = vm.OpPOP
 			} else {
-				dec.Op = isa.OpPUSH
+				dec.Op = vm.OpPUSH
 			}
 		} else {
 			if lBit {
-				dec.Op = isa.OpLDM
+				dec.Op = vm.OpLDM
 			} else {
-				dec.Op = isa.OpSTM
+				dec.Op = vm.OpSTM
 			}
 		}
 		return dec, nil
@@ -112,7 +111,7 @@ func DecodeARM32(raw uint32) (*DecodedARM, error) {
 		isMul := (raw & 0x0FC000F0) == 0x00000090
 		isMla := (raw & 0x0FC000F0) == 0x00200090
 		if isMul {
-			dec.Op = isa.OpMUL
+			dec.Op = vm.OpMUL
 			dec.SetFlags = (raw & (1 << 20)) != 0
 			dec.Rd = uint8((raw >> 16) & 0x0F)
 			dec.Rm = uint8(raw & 0x0F)
@@ -120,7 +119,7 @@ func DecodeARM32(raw uint32) (*DecodedARM, error) {
 			return dec, nil
 		}
 		if isMla {
-			dec.Op = isa.OpMLA
+			dec.Op = vm.OpMLA
 			dec.SetFlags = (raw & (1 << 20)) != 0
 			dec.Rd = uint8((raw >> 16) & 0x0F)
 			dec.Rm = uint8(raw & 0x0F)
@@ -156,16 +155,18 @@ func DecodeARM32(raw uint32) (*DecodedARM, error) {
 
 		if !sBit && hBit {
 			if lBit {
-				dec.Op = isa.OpLDRH
+				dec.Op = vm.OpLDRH
 			} else {
-				dec.Op = isa.OpSTRH
+				dec.Op = vm.OpSTRH
 			}
 		} else if sBit && !hBit {
-			dec.Op = isa.OpLDRSB
+			dec.Op = vm.OpLDRSB
 		} else if sBit && hBit {
-			dec.Op = isa.OpLDRSH
+			dec.Op = vm.OpLDRSH
 		} else {
-			return nil, fmt.Errorf("unsupported load/store extra raw: 0x%08X", raw)
+			dec.Op = vm.OpESCAPE
+			dec.HasImm = true
+			dec.Imm = raw
 		}
 		return dec, nil
 	}
@@ -182,15 +183,15 @@ func DecodeARM32(raw uint32) (*DecodedARM, error) {
 
 		if lBit {
 			if bBit {
-				dec.Op = isa.OpLDRB
+				dec.Op = vm.OpLDRB
 			} else {
-				dec.Op = isa.OpLDR
+				dec.Op = vm.OpLDR
 			}
 		} else {
 			if bBit {
-				dec.Op = isa.OpSTRB
+				dec.Op = vm.OpSTRB
 			} else {
-				dec.Op = isa.OpSTR
+				dec.Op = vm.OpSTR
 			}
 		}
 
@@ -221,46 +222,69 @@ func DecodeARM32(raw uint32) (*DecodedARM, error) {
 		// Map ARM opcode bits to IVM opcode
 		switch opCodeBits {
 		case 0x00:
-			dec.Op = isa.OpAND
+			dec.Op = vm.OpAND
 		case 0x01:
-			dec.Op = isa.OpEOR
+			dec.Op = vm.OpEOR
 		case 0x02:
-			dec.Op = isa.OpSUB
+			dec.Op = vm.OpSUB
 		case 0x03:
-			dec.Op = isa.OpRSB
+			dec.Op = vm.OpRSB
 		case 0x04:
-			dec.Op = isa.OpADD
+			dec.Op = vm.OpADD
 		case 0x05:
-			dec.Op = isa.OpADC
+			dec.Op = vm.OpADC
 		case 0x06:
-			dec.Op = isa.OpSBC
+			dec.Op = vm.OpSBC
 		case 0x08:
-			dec.Op = isa.OpTST
-			dec.SetFlags = true
+			if !dec.SetFlags {
+				dec.Op = vm.OpESCAPE
+				dec.HasImm = true
+				dec.Imm = raw
+				return dec, nil
+			}
+			dec.Op = vm.OpTST
 		case 0x09:
-			dec.Op = isa.OpTEQ
-			dec.SetFlags = true
+			if !dec.SetFlags {
+				dec.Op = vm.OpESCAPE
+				dec.HasImm = true
+				dec.Imm = raw
+				return dec, nil
+			}
+			dec.Op = vm.OpTEQ
 		case 0x0A:
-			dec.Op = isa.OpCMP
-			dec.SetFlags = true
+			if !dec.SetFlags {
+				dec.Op = vm.OpESCAPE
+				dec.HasImm = true
+				dec.Imm = raw
+				return dec, nil
+			}
+			dec.Op = vm.OpCMP
 		case 0x0B:
-			dec.Op = isa.OpCMN
-			dec.SetFlags = true
+			if !dec.SetFlags {
+				dec.Op = vm.OpESCAPE
+				dec.HasImm = true
+				dec.Imm = raw
+				return dec, nil
+			}
+			dec.Op = vm.OpCMN
 		case 0x0C:
-			dec.Op = isa.OpORR
+			dec.Op = vm.OpORR
 		case 0x0D:
-			dec.Op = isa.OpMOV
+			dec.Op = vm.OpMOV
 		case 0x0E:
-			dec.Op = isa.OpBIC
+			dec.Op = vm.OpBIC
 		case 0x0F:
-			dec.Op = isa.OpMVN
+			dec.Op = vm.OpMVN
 		default:
-			return nil, fmt.Errorf("unknown ARM data opcode 0x%X in raw 0x%08X", opCodeBits, raw)
+			dec.Op = vm.OpESCAPE
+			dec.HasImm = true
+			dec.Imm = raw
+			return dec, nil
 		}
 
-		// NOP check (MOV R0, R0)
-		if dec.Op == isa.OpMOV && dec.Rd == 0 && dec.Rn == 0 && (raw&0xFFF) == 0 && !dec.SetFlags {
-			dec.Op = isa.OpNOP
+		// NOP check (MOV R0, R0 register move, not immediate MOV R0, #0)
+		if !iBit && dec.Op == vm.OpMOV && dec.Rd == 0 && dec.Rn == 0 && (raw&0xFFF) == 0 && !dec.SetFlags {
+			dec.Op = vm.OpNOP
 			return dec, nil
 		}
 
@@ -277,5 +301,9 @@ func DecodeARM32(raw uint32) (*DecodedARM, error) {
 		return dec, nil
 	}
 
-	return nil, fmt.Errorf("unhandled ARM32 instruction raw: 0x%08X", raw)
+	// Unhandled ARM32 instruction: Fall back to Host Native CPU execution bridge
+	dec.Op = vm.OpESCAPE
+	dec.HasImm = true
+	dec.Imm = raw
+	return dec, nil
 }

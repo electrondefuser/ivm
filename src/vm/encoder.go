@@ -1,4 +1,4 @@
-package isa
+package vm
 
 import (
 	"encoding/binary"
@@ -22,8 +22,24 @@ func EncodeInstruction(inst Instruction) [8]byte {
 	flags |= (inst.ShiftType & 0x03)
 	buf[1] = flags
 
-	buf[2] = ((inst.RegDst & 0x0F) << 4) | (inst.RegSrc1 & 0x0F)
-	buf[3] = ((inst.RegSrc2 & 0x0F) << 4) | (inst.ShiftAmount & 0x0F)
+	if inst.Arch == ArchARMv8 || inst.Is64Bit || inst.RegDst > 15 || inst.RegSrc1 > 15 || inst.RegSrc2 > 15 {
+		// ARMv8 16-bit register packing:
+		// Bits 0..4:   RegDst (5 bits: 0-31)
+		// Bits 5..9:   RegSrc1 (5 bits: 0-31)
+		// Bits 10..14: RegSrc2 (5 bits: 0-31)
+		// Bit 15:      Is64Bit (1 bit: 1 if 64-bit, 0 if 32-bit)
+		regVal := uint16(inst.RegDst&0x1F) |
+			(uint16(inst.RegSrc1&0x1F) << 5) |
+			(uint16(inst.RegSrc2&0x1F) << 10)
+		if inst.Is64Bit {
+			regVal |= (1 << 15)
+		}
+		binary.LittleEndian.PutUint16(buf[2:4], regVal)
+	} else {
+		// ARMv7 standard 4-bit register packing:
+		buf[2] = ((inst.RegDst & 0x0F) << 4) | (inst.RegSrc1 & 0x0F)
+		buf[3] = ((inst.RegSrc2 & 0x0F) << 4) | (inst.ShiftAmount & 0x0F)
+	}
 
 	binary.LittleEndian.PutUint32(buf[4:8], inst.Imm)
 	return buf

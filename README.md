@@ -1,20 +1,22 @@
-# IVM — Independent Virtual Machine for ARMv7
+# IVM — Independent Virtual Machine for ARMv7 & ARMv8
 
-**IVM** is a custom 32-bit virtual machine system and bytecode format built entirely in **Go**. It takes compiled ARMv7 ELF binaries (or object files), disassembles and translates their machine instructions into a custom-designed **IVM ISA bytecode**, packs them into a compressed `.ivm` container binary, and executes them via a custom virtual machine interpreter.
+**IVM** is a dual-architecture virtual machine system and custom bytecode format built entirely in **Go**. It takes compiled 32-bit ARMv7 or 64-bit ARMv8 (AArch64) ELF binaries (or object files), disassembles and translates their machine instructions into a custom-designed **IVM ISA bytecode**, packs them into an `.ivm` container binary, and executes them via a custom virtual machine interpreter.
 
 ---
 
 ## Features
 
-- **Custom ISA Bytecode**: 35+ ARMv7 instructions mapped to a fixed 8-byte bytecode format (`.ivm`).
+- **Dual-Architecture Support**: Supports both ARMv7 (32-bit, `vm.ArchARMv7`) and ARMv8 (64-bit AArch64, `vm.ArchARMv8`).
+- **Custom ISA Bytecode**: Fixed 8-byte bytecode layout supporting 32-bit registers (R0-R15) and 64-bit registers (X0-X31 / SP).
 - **CLI Commands**:
-  - `ivm --pack [--arch armv7] [-o out.ivm] <binary>` — Packs ARMv7 ELF/object files into `.ivm` containers.
+  - `ivm --pack [--arch armv7|armv8] [-o out.ivm] <binary>` — Packs ARM ELF/object files into `.ivm` containers.
   - `ivm --run [--debug] <binary.ivm>` — Interprets and executes `.ivm` VM containers.
   - `ivm --disasm <binary.ivm>` — Pretty-prints the packed IVM bytecode with disassembled custom assembly instructions.
   - Subcommand variants (`ivm pack ...`, `ivm run ...`, `ivm disasm ...`) are also supported.
-- **ARMv7 Linux Syscall Emulation**: Full EABI syscall interception (`sys_write`, `sys_read`, `sys_exit`, `sys_brk`, `sys_open`, `sys_close`, `sys_getpid`, `sys_uname`, `sys_writev`).
-- **Full Relocation Resolver**: Pure Go ELF parser (`debug/elf`) that resolves `R_ARM_ABS32`, `R_ARM_TARGET1`, `R_ARM_CALL`, and `R_ARM_JUMP24` relocations for object files (`.o`) and executables.
-- **Zero External Dependencies**: 100% written in standard Go.
+- **Linux Syscall Emulation & Direct Host Fallback**: Intercepts ARMv7 (`R7`) and ARMv8 (`X8`) Linux syscalls. If a syscall is not defined in IVM, the **Host Syscall Bridge** directly executes it on the host OS (`getppid`, `getuid`, `getcwd`, `lseek`, `fstat`, `time`, `clock_gettime`, `nanosleep`, etc.) or invokes direct host syscalls.
+- **Host CPU Fallback Bridge**: Unrecognized or unvirtualized instructions automatically escape to physical host evaluation (`OpESCAPE`).
+- **Full Relocation Resolver**: Pure Go ELF parser (`debug/elf`) that resolves relocations for both ARMv7 (`R_ARM_*`) and ARMv8 (`R_AARCH64_*`) object files.
+- **Zero External Dependencies**: 100% written in standard Go without CGO or third-party packages.
 
 ---
 
@@ -66,7 +68,11 @@ Bytes 4..7: 32-bit Immediate / Offset / Memory Address (Little Endian uint32)
 | `0x1D` | `BL` | Branch with Link (subroutine call) |
 | `0x1E` | `BX` | Branch & Exchange to Register Target |
 | `0x1F` | `BLX` | Branch with Link & Exchange |
-| `0x20` | `SVC` | ARMv7 Linux System Call |
+| `0x20` | `SVC` | Linux System Call (ARMv7 R7 / ARMv8 X8 convention) |
+| `0x23` | `STP` | Store Pair of Registers (`[Xn, #offset]`) |
+| `0x24` | `LDP` | Load Pair of Registers (`[Xn, #offset]`) |
+| `0x25` | `LDRL`| Load Literal (PC-relative data / constant pool) |
+| `0xFD` | `ESCAPE` | Hand over unvirtualized instruction to Host CPU |
 | `0xFE` | `HALT` | Stop Virtual Machine execution |
 
 ---
@@ -75,34 +81,43 @@ Bytes 4..7: 32-bit Immediate / Offset / Memory Address (Little Endian uint32)
 
 ### 1. Build the IVM CLI Tool
 ```bash
-go build -o ivm ./cmd/ivm
+go build -o bin/ivm ./cmd/ivm
 ```
 
-### 2. Packing an ARMv7 Binary
-Compile your ARMv7 assembly or C source into an ELF binary or object file:
+### 2. Packing & Running ARMv7 (32-bit) Binaries
+Assemble with ARMv7 target:
 ```bash
-clang --target=armv7-linux-gnueabi -c -o hello.o testdata/hello.s
+clang --target=armv7-linux-gnueabi -c resources/asmsource/hello.s -o resources/bin/armbinary/hello.o
 ```
 
-Pack it into an `.ivm` binary container:
+Pack and execute:
 ```bash
-./ivm --pack testdata/hello.o -o hello.ivm
-# Or using subcommands:
-./ivm pack --arch armv7 testdata/hello.o -o hello.ivm
+./bin/ivm --pack --arch armv7 resources/bin/armbinary/hello.o -o resources/bin/ivm/hello.ivm
+./bin/ivm --run resources/bin/ivm/hello.ivm
 ```
 
-### 3. Running an IVM Container
-Execute the `.ivm` file in the VM interpreter:
+### 3. Packing & Running ARMv8 (64-bit) Binaries
+Assemble with AArch64 target:
 ```bash
-./ivm --run hello.ivm
-# Or with subcommands and verbose debug register tracing:
-./ivm run --debug hello.ivm
+clang --target=aarch64-linux-gnu -c resources/asmsource/hello_armv8.s -o resources/bin/armbinary/hello_armv8.o
+```
+
+Pack and execute:
+```bash
+./bin/ivm --pack --arch armv8 resources/bin/armbinary/hello_armv8.o -o resources/bin/ivm/hello_armv8.ivm
+./bin/ivm --run resources/bin/ivm/hello_armv8.ivm
 ```
 
 ### 4. Disassembling an IVM File
 Inspect the packed custom ISA instructions:
 ```bash
-./ivm --disasm hello.ivm
+./bin/ivm --disasm resources/bin/ivm/hello_armv8.ivm
+```
+
+### 5. Running with Debug Tracing
+Inspect register dumps and step counts:
+```bash
+./bin/ivm --run --debug resources/bin/ivm/loop_sum_armv8.ivm
 ```
 
 ---
@@ -111,13 +126,5 @@ Inspect the packed custom ISA instructions:
 
 Run the full Go test suite:
 ```bash
-go test ./...
-```
-
-Run test suite binaries (`add_numbers`, `hello`, `loop_sum`, `factorial`):
-```bash
-./ivm --pack testdata/add_numbers.o && ./ivm --run testdata/add_numbers.ivm
-./ivm --pack testdata/hello.o && ./ivm --run testdata/hello.ivm
-./ivm --pack testdata/loop_sum.o && ./ivm --run testdata/loop_sum.ivm
-./ivm --pack testdata/factorial.o && ./ivm --run testdata/factorial.ivm
+go test -v ./...
 ```

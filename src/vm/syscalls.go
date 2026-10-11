@@ -1,7 +1,6 @@
 package vm
 
 import (
-	"fmt"
 	"io"
 	"os"
 	"syscall"
@@ -27,17 +26,84 @@ func toUint32(val int32) uint32 {
 	return uint32(val)
 }
 
-/* HandleSyscall intercepts ARMv7 Linux syscalls */
+/* HandleSyscall intercepts both ARMv7 (R7) and ARMv8 (X8) Linux syscalls */
 func (interp *Interpreter) HandleSyscall() error {
-	sysNum := interp.CPU.GetReg(7)
+	var sysNum uint32
+	var rawSys uint64
+	args := make([]uint64, 6)
 
-	arg0 := interp.CPU.GetReg(0)
-	arg1 := interp.CPU.GetReg(1)
-	arg2 := interp.CPU.GetReg(2)
-	arg3 := interp.CPU.GetReg(3)
+	setResult := func(val uint64) {
+		if interp.CPU.Arch == ArchARMv8 {
+			interp.CPU.SetReg64(0, val)
+		} else {
+			interp.CPU.SetReg(0, uint32(val))
+		}
+	}
+
+	if interp.CPU.Arch == ArchARMv8 { // ARMv8 Linux (AArch64)
+		rawSys = interp.CPU.GetReg64(8) // Syscall number in X8
+		for i := 0; i < 6; i++ {
+			args[i] = interp.CPU.GetReg64(uint8(i))
+		}
+
+		switch rawSys {
+		case 93, 94: // sys_exit, sys_exit_group on AArch64
+			sysNum = SysExit
+		case 64: // sys_write on AArch64
+			sysNum = SysWrite
+		case 63: // sys_read on AArch64
+			sysNum = SysRead
+		case 214: // sys_brk on AArch64
+			sysNum = SysBrk
+		case 56: // sys_openat on AArch64 (path in x1)
+			sysNum = SysOpen
+			args[0] = args[1]
+		case 57: // sys_close on AArch64
+			sysNum = SysClose
+		case 160: // sys_uname on AArch64
+			sysNum = SysUname
+		case 172: // sys_getpid on AArch64
+			sysNum = SysGetPID
+		case 66: // sys_writev on AArch64
+			sysNum = SysWriteV
+		default:
+			sysNum = 0 // Dispatch to HostSyscallBridge
+		}
+	} else { // ARMv7 Linux
+		rawSys = uint64(interp.CPU.GetReg(7)) // Syscall number in R7
+		for i := 0; i < 6; i++ {
+			args[i] = uint64(interp.CPU.GetReg(uint8(i)))
+		}
+
+		switch uint32(rawSys) {
+		case SysExit, SysExitGroup:
+			sysNum = SysExit
+		case SysWrite:
+			sysNum = SysWrite
+		case SysRead:
+			sysNum = SysRead
+		case SysOpen:
+			sysNum = SysOpen
+		case SysClose:
+			sysNum = SysClose
+		case SysGetPID:
+			sysNum = SysGetPID
+		case SysBrk:
+			sysNum = SysBrk
+		case SysUname:
+			sysNum = SysUname
+		case SysWriteV:
+			sysNum = SysWriteV
+		default:
+			sysNum = 0 // Dispatch to HostSyscallBridge
+		}
+	}
+
+	arg0 := uint32(args[0])
+	arg1 := uint32(args[1])
+	arg2 := uint32(args[2])
 
 	switch sysNum {
-
 	case SysExit, SysExitGroup:
 		interp.CPU.Halted = true
 		interp.CPU.ExitCode = int(arg0)
@@ -59,14 +125,13 @@ func (interp *Interpreter) HandleSyscall() error {
 		case 2:
 			written, err = os.Stderr.Write(bytes)
 		default:
-			// Write to arbitrary file descriptor if open in host
 			written, err = syscall.Write(fd, bytes)
 		}
 
 		if err != nil {
-			interp.CPU.SetReg(0, toUint32(-9)) // -EBADF
+			setResult(uint64(toUint32(-9))) // -EBADF
 		} else {
-			interp.CPU.SetReg(0, uint32(written))
+			setResult(uint64(written))
 		}
 		return nil
 
@@ -86,28 +151,28 @@ func (interp *Interpreter) HandleSyscall() error {
 		}
 
 		if err != nil && err != io.EOF {
-			interp.CPU.SetReg(0, toUint32(-9)) // -EBADF
+			setResult(uint64(toUint32(-9))) // -EBADF
 		} else {
 			interp.Memory.WriteBytes(bufAddr, buf[:n])
-			interp.CPU.SetReg(0, uint32(n))
+			setResult(uint64(n))
 		}
 		return nil
 
 	case SysBrk:
 		reqAddr := arg0
 		if reqAddr == 0 {
-			interp.CPU.SetReg(0, interp.Memory.Break)
+			setResult(uint64(interp.Memory.Break))
 		} else {
 			if reqAddr > interp.Memory.Break {
 				interp.Memory.Break = reqAddr
 			}
-			interp.CPU.SetReg(0, interp.Memory.Break)
+			setResult(uint64(interp.Memory.Break))
 		}
 		return nil
 
 	case SysGetPID:
 		pid := os.Getpid()
-		interp.CPU.SetReg(0, uint32(pid))
+		setResult(uint64(pid))
 		return nil
 
 	case SysOpen:
@@ -116,9 +181,9 @@ func (interp *Interpreter) HandleSyscall() error {
 		mode := uint32(arg2)
 		fd, err := syscall.Open(path, flags, mode)
 		if err != nil {
-			interp.CPU.SetReg(0, toUint32(-1)) // -1
+			setResult(uint64(toUint32(-1)))
 		} else {
-			interp.CPU.SetReg(0, uint32(fd))
+			setResult(uint64(fd))
 		}
 		return nil
 
@@ -127,7 +192,7 @@ func (interp *Interpreter) HandleSyscall() error {
 		if fd > 2 {
 			syscall.Close(fd)
 		}
-		interp.CPU.SetReg(0, 0)
+		setResult(0)
 		return nil
 
 	case SysWriteV:
@@ -136,46 +201,53 @@ func (interp *Interpreter) HandleSyscall() error {
 		iovCnt := int(arg2)
 
 		totalWritten := 0
-		for i := 0; i < iovCnt; i++ {
+		for i := range iovCnt {
 			base := interp.Memory.Read32(iovAddr + uint32(i*8))
 			len := interp.Memory.Read32(iovAddr + uint32(i*8+4))
 			data := interp.Memory.ReadBytes(base, len)
 
 			var n int
-			if fd == 1 {
+			switch fd {
+			case 1:
 				n, _ = os.Stdout.Write(data)
-			} else if fd == 2 {
+			case 2:
 				n, _ = os.Stderr.Write(data)
-			} else {
+			default:
 				n, _ = syscall.Write(fd, data)
 			}
 			totalWritten += n
 		}
-		interp.CPU.SetReg(0, uint32(totalWritten))
+		setResult(uint64(totalWritten))
 		return nil
 
 	case SysUname:
 		bufAddr := arg0
-		// struct utsname (65 bytes per field on Linux: sysname, nodename, release, version, machine)
 		writeStringPadded := func(offset uint32, str string) {
 			b := make([]byte, 65)
 			copy(b, []byte(str))
 			interp.Memory.WriteBytes(bufAddr+offset, b)
 		}
+		archName := "armv7l"
+		if interp.CPU.Arch == ArchARMv8 {
+			archName = "aarch64"
+		}
 		writeStringPadded(0, "Linux")
 		writeStringPadded(65, "ivm-host")
 		writeStringPadded(130, "5.15.0-ivm")
 		writeStringPadded(195, "#1 IVM Virtual Machine")
-		writeStringPadded(260, "armv7l")
-		interp.CPU.SetReg(0, 0)
+		writeStringPadded(260, archName)
+		setResult(0)
 		return nil
 
 	default:
-		// Unimplemented syscall fallback
-		if interp.Debug {
-			fmt.Printf("[IVM VM Syscall] Warning: Unhandled syscall #%d (args: 0x%X, 0x%X, 0x%X, 0x%X)\n", sysNum, arg0, arg1, arg2, arg3)
+		if interp.HostSyscallBridge == nil {
+			interp.HostSyscallBridge = NewHostSyscallBridge(interp.Debug)
 		}
-		interp.CPU.SetReg(0, 0)
+		res, err := interp.HostSyscallBridge.Execute(interp, rawSys, args)
+		if err != nil {
+			return err
+		}
+		setResult(res)
 		return nil
 	}
 }

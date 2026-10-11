@@ -4,20 +4,23 @@ import (
 	"fmt"
 	"strings"
 
-	"ivm/src/format"
-	"ivm/src/isa"
+	"ivm/src/vm"
 )
 
 /* DisassembleIVM formats an IVMFile into human readable assembly output */
-func DisassembleIVM(ivmFile *format.IVMFile) (string, error) {
-	instructions, err := isa.DecodeSlice(ivmFile.Bytecode)
+func DisassembleIVM(ivmFile *vm.IVMFile) (string, error) {
+	instructions, err := vm.DecodeSlice(ivmFile.Bytecode, ivmFile.Header.Arch)
 	if err != nil {
 		return "", fmt.Errorf("failed to decode bytecode for disassembly: %w", err)
 	}
 
 	var sb strings.Builder
+	archName := "ARMv7 (32-bit)"
+	if ivmFile.Header.Arch == vm.ArchARMv8 {
+		archName = "ARMv8 (64-bit)"
+	}
 	fmt.Fprintf(&sb, "; IVM Binary Disassembly\n")
-	fmt.Fprintf(&sb, "; Target Arch: ARMv7 (0x%04X)\n", ivmFile.Header.Arch)
+	fmt.Fprintf(&sb, "; Target Arch: %s (0x%04X)\n", archName, ivmFile.Header.Arch)
 	fmt.Fprintf(&sb, "; Code Load Addr: 0x%08X (Size: %d bytes, %d insts)\n", ivmFile.Header.CodeLoadAddr, ivmFile.Header.CodeSize, len(instructions))
 	fmt.Fprintf(&sb, "; Data Load Addr: 0x%08X (Size: %d bytes)\n", ivmFile.Header.DataLoadAddr, ivmFile.Header.DataSize)
 	fmt.Fprintf(&sb, "; Entry PC: 0x%08X\n\n", ivmFile.Header.EntryPC)
@@ -26,7 +29,7 @@ func DisassembleIVM(ivmFile *format.IVMFile) (string, error) {
 
 	for i, inst := range instructions {
 		currAddr := codeBase + uint32(i*4)
-		encoded := isa.EncodeInstruction(inst)
+		encoded := vm.EncodeInstruction(inst)
 
 		bytesHex := fmt.Sprintf("%02X %02X %02X %02X %02X %02X %02X %02X",
 			encoded[0], encoded[1], encoded[2], encoded[3],
@@ -40,13 +43,13 @@ func DisassembleIVM(ivmFile *format.IVMFile) (string, error) {
 		}
 
 		instStr := FormatInstruction(inst, currAddr)
-		sb.WriteString(fmt.Sprintf("%s 0x%08X:  %-23s  %s\n", entryMark, currAddr, bytesHex, instStr))
+		fmt.Fprintf(&sb, "%s 0x%08X:  %-23s  %s\n", entryMark, currAddr, bytesHex, instStr)
 	}
 
 	return sb.String(), nil
 }
 
-func FormatInstruction(inst isa.Instruction, currAddr uint32) string {
+func FormatInstruction(inst vm.Instruction, currAddr uint32) string {
 	condSuffix := formatCond(inst.Cond)
 	flagSuffix := ""
 
@@ -56,9 +59,16 @@ func FormatInstruction(inst isa.Instruction, currAddr uint32) string {
 
 	mnemonic := fmt.Sprintf("%s%s%s", inst.Op.String(), condSuffix, flagSuffix)
 
-	dstReg := isa.FormatReg(inst.RegDst)
-	src1Reg := isa.FormatReg(inst.RegSrc1)
-	src2Reg := isa.FormatReg(inst.RegSrc2)
+	var dstReg, src1Reg, src2Reg string
+	if inst.Arch == vm.ArchARMv8 || inst.Is64Bit || inst.RegDst > 15 || inst.RegSrc1 > 15 || inst.RegSrc2 > 15 {
+		dstReg = vm.FormatReg8(inst.RegDst, inst.Is64Bit)
+		src1Reg = vm.FormatReg8(inst.RegSrc1, inst.Is64Bit)
+		src2Reg = vm.FormatReg8(inst.RegSrc2, inst.Is64Bit)
+	} else {
+		dstReg = vm.FormatReg(inst.RegDst)
+		src1Reg = vm.FormatReg(inst.RegSrc1)
+		src2Reg = vm.FormatReg(inst.RegSrc2)
+	}
 
 	getOp2Str := func() string {
 		if inst.HasImm {
@@ -73,47 +83,56 @@ func FormatInstruction(inst isa.Instruction, currAddr uint32) string {
 	}
 
 	switch inst.Op {
-	case isa.OpNOP:
+	case vm.OpNOP:
 		return mnemonic
 
-	case isa.OpMOV, isa.OpMVN:
+	case vm.OpMOV, vm.OpMVN:
 		return fmt.Sprintf("%-8s %s, %s", mnemonic, dstReg, getOp2Str())
 
-	case isa.OpADD, isa.OpADC, isa.OpSUB, isa.OpSBC, isa.OpRSB, isa.OpAND, isa.OpORR, isa.OpEOR, isa.OpBIC:
+	case vm.OpADD, vm.OpADC, vm.OpSUB, vm.OpSBC, vm.OpRSB, vm.OpAND, vm.OpORR, vm.OpEOR, vm.OpBIC:
 		return fmt.Sprintf("%-8s %s, %s, %s", mnemonic, dstReg, src1Reg, getOp2Str())
 
-	case isa.OpMUL:
+	case vm.OpMUL:
 		return fmt.Sprintf("%-8s %s, %s, %s", mnemonic, dstReg, src1Reg, src2Reg)
 
-	case isa.OpMLA:
-		return fmt.Sprintf("%-8s %s, %s, %s, %s", mnemonic, dstReg, src1Reg, src2Reg, isa.FormatReg(inst.RegDst))
+	case vm.OpMLA:
+		return fmt.Sprintf("%-8s %s, %s, %s, %s", mnemonic, dstReg, src1Reg, src2Reg, dstReg)
 
-	case isa.OpCMP, isa.OpCMN, isa.OpTST, isa.OpTEQ:
+	case vm.OpCMP, vm.OpCMN, vm.OpTST, vm.OpTEQ:
 		return fmt.Sprintf("%-8s %s, %s", mnemonic, src1Reg, getOp2Str())
 
-	case isa.OpLDR, isa.OpLDRB, isa.OpLDRH, isa.OpLDRSB, isa.OpLDRSH:
+	case vm.OpLDR, vm.OpLDRB, vm.OpLDRH, vm.OpLDRSB, vm.OpLDRSH:
 		return fmt.Sprintf("%-8s %s, [%s, %s]", mnemonic, dstReg, src1Reg, getOp2Str())
 
-	case isa.OpSTR, isa.OpSTRB, isa.OpSTRH:
+	case vm.OpLDRL:
+		return fmt.Sprintf("%-8s %s, =0x%08X", mnemonic, dstReg, inst.Imm)
+
+	case vm.OpSTR, vm.OpSTRB, vm.OpSTRH:
 		return fmt.Sprintf("%-8s %s, [%s, %s]", mnemonic, dstReg, src1Reg, getOp2Str())
 
-	case isa.OpPUSH:
+	case vm.OpSTP, vm.OpLDP:
+		return fmt.Sprintf("%-8s %s, %s, [%s, #%d]", mnemonic, dstReg, src2Reg, src1Reg, int32(inst.Imm))
+
+	case vm.OpPUSH:
 		return fmt.Sprintf("%-8s {mask: 0x%04X}", mnemonic, inst.Imm)
 
-	case isa.OpPOP:
+	case vm.OpPOP:
 		return fmt.Sprintf("%-8s {mask: 0x%04X}", mnemonic, inst.Imm)
 
-	case isa.OpB, isa.OpBL:
+	case vm.OpB, vm.OpBL:
 		return fmt.Sprintf("%-8s 0x%08X", mnemonic, inst.Imm)
 
-	case isa.OpBX, isa.OpBLX:
+	case vm.OpBX, vm.OpBLX:
 		return fmt.Sprintf("%-8s %s", mnemonic, src1Reg)
 
-	case isa.OpSVC:
+	case vm.OpSVC:
 		return fmt.Sprintf("%-8s #0x%X", mnemonic, inst.Imm)
 
-	case isa.OpHALT:
+	case vm.OpHALT:
 		return mnemonic
+
+	case vm.OpESCAPE:
+		return fmt.Sprintf("%-8s [RAW: 0x%08X]", mnemonic, inst.Imm)
 
 	default:
 		return fmt.Sprintf("%-8s %s, %s, %s, #0x%X", mnemonic, dstReg, src1Reg, src2Reg, inst.Imm)
@@ -122,33 +141,33 @@ func FormatInstruction(inst isa.Instruction, currAddr uint32) string {
 
 func formatCond(cond uint8) string {
 	switch cond {
-	case isa.CondEQ:
+	case vm.CondEQ:
 		return "EQ"
-	case isa.CondNE:
+	case vm.CondNE:
 		return "NE"
-	case isa.CondCS:
+	case vm.CondCS:
 		return "CS"
-	case isa.CondCC:
+	case vm.CondCC:
 		return "CC"
-	case isa.CondMI:
+	case vm.CondMI:
 		return "MI"
-	case isa.CondPL:
+	case vm.CondPL:
 		return "PL"
-	case isa.CondVS:
+	case vm.CondVS:
 		return "VS"
-	case isa.CondVC:
+	case vm.CondVC:
 		return "VC"
-	case isa.CondHI:
+	case vm.CondHI:
 		return "HI"
-	case isa.CondLS:
+	case vm.CondLS:
 		return "LS"
-	case isa.CondGE:
+	case vm.CondGE:
 		return "GE"
-	case isa.CondLT:
+	case vm.CondLT:
 		return "LT"
-	case isa.CondGT:
+	case vm.CondGT:
 		return "GT"
-	case isa.CondLE:
+	case vm.CondLE:
 		return "LE"
 	default:
 		return ""

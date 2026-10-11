@@ -3,12 +3,11 @@ package armv7
 import (
 	"encoding/binary"
 	"fmt"
-	"ivm/src/format"
-	"ivm/src/isa"
+	"ivm/src/vm"
 )
 
 type TranslationReslt struct {
-	IVMFile *format.IVMFile
+	IVMFile *vm.IVMFile
 	Stats   TranslationStats
 }
 
@@ -25,7 +24,7 @@ func TranslateELF(elfBin *ELFBinary) (*TranslationReslt, error) {
 	}
 
 	armInstCount := len(codeBytes) / 4
-	ivmInstructions := make([]isa.Instruction, 0, armInstCount)
+	ivmInstructions := make([]vm.Instruction, 0, armInstCount)
 
 	baseAddr := elfBin.CodeAddr
 
@@ -42,11 +41,11 @@ func TranslateELF(elfBin *ELFBinary) (*TranslationReslt, error) {
 		ivmInstructions = append(ivmInstructions, ivmInst)
 	}
 
-	bytecode := isa.EncodeSlice(ivmInstructions)
+	bytecode := vm.EncodeSlice(ivmInstructions)
 
-	ivmFile := &format.IVMFile{
-		Header: format.Header{
-			Arch:         format.ArchARMv7,
+	ivmFile := &vm.IVMFile{
+		Header: vm.Header{
+			Arch:         vm.ArchARMv7,
 			EntryPC:      elfBin.Entry,
 			CodeLoadAddr: elfBin.CodeAddr,
 			CodeSize:     uint32(len(bytecode)),
@@ -70,8 +69,8 @@ func TranslateELF(elfBin *ELFBinary) (*TranslationReslt, error) {
 	}, nil
 }
 
-func convertDecodedARMToIVM(dec *DecodedARM, currPC uint32) isa.Instruction {
-	inst := isa.Instruction{
+func convertDecodedARMToIVM(dec *DecodedARM, currPC uint32) vm.Instruction {
+	inst := vm.Instruction{
 		Op:          dec.Op,
 		Cond:        dec.Cond,
 		SetFlags:    dec.SetFlags,
@@ -85,7 +84,7 @@ func convertDecodedARMToIVM(dec *DecodedARM, currPC uint32) isa.Instruction {
 	}
 
 	// Calculate absolute target address for relative branch instructions
-	if dec.Op == isa.OpB || dec.Op == isa.OpBL {
+	if dec.Op == vm.OpB || dec.Op == vm.OpBL {
 		// ARM PC during instruction execution is CurrentPC + 8
 		targetAddr := currPC + 8 + uint32(int32(dec.Imm))
 		inst.Imm = targetAddr
@@ -93,7 +92,7 @@ func convertDecodedARMToIVM(dec *DecodedARM, currPC uint32) isa.Instruction {
 
 	// Set default condition to AL if 0 or 14
 	if dec.Cond == 0x0F {
-		inst.Cond = isa.CondAL
+		inst.Cond = vm.CondAL
 	}
 
 	return inst

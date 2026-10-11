@@ -99,6 +99,21 @@ func (m *Memory) ReadString(addr uint32) string {
 	return string(bytes)
 }
 
+func (m *Memory) WriteString(addr uint32, str string) {
+	m.WriteBytes(addr, append([]byte(str), 0))
+}
+
+func (m *Memory) Read64(addr uint32) uint64 {
+	lo := uint64(m.Read32(addr))
+	hi := uint64(m.Read32(addr + 4))
+	return lo | (hi << 32)
+}
+
+func (m *Memory) Write64(addr uint32, val uint64) {
+	m.Write32(addr, uint32(val&0xFFFFFFFF))
+	m.Write32(addr+4, uint32(val>>32))
+}
+
 func (m *Memory) Push32(sp *uint32, val uint32) {
 	*sp -= 4
 	m.Write32(*sp, val)
@@ -107,6 +122,17 @@ func (m *Memory) Push32(sp *uint32, val uint32) {
 func (m *Memory) Pop32(sp *uint32) uint32 {
 	val := m.Read32(*sp)
 	*sp += 4
+	return val
+}
+
+func (m *Memory) Push64(sp *uint64, val uint64) {
+	*sp -= 8
+	m.Write64(uint32(*sp), val)
+}
+
+func (m *Memory) Pop64(sp *uint64) uint64 {
+	val := m.Read64(uint32(*sp))
+	*sp += 8
 	return val
 }
 

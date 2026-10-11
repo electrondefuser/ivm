@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"ivm/src/armv7"
+	"ivm/src/architectures/armv7"
+	"ivm/src/architectures/armv8"
 	"ivm/src/disasm"
-	"ivm/src/format"
 	"ivm/src/vm"
 )
 
@@ -150,9 +150,7 @@ func main() {
 }
 
 func handlePack(inputFile, arch, outputFile string) error {
-	if strings.ToLower(arch) != "armv7" {
-		return fmt.Errorf("unsupported architecture '%s' (only armv7 is currently supported)", arch)
-	}
+	archNorm := strings.ToLower(arch)
 
 	if outputFile == "" {
 		ext := filepath.Ext(inputFile)
@@ -163,33 +161,61 @@ func handlePack(inputFile, arch, outputFile string) error {
 		}
 	}
 
-	fmt.Printf("[IVM Packer] Reading ARMv7 ELF binary: %s\n", inputFile)
-	elfBin, err := armv7.ParseELF(inputFile)
-	if err != nil {
-		return err
+	if archNorm == "armv8" || archNorm == "aarch64" || archNorm == "arm64" {
+		fmt.Printf("[IVM Packer] Reading ARMv8 (AArch64) ELF binary: %s\n", inputFile)
+		elfBin, err := armv8.ParseELF(inputFile)
+		if err != nil {
+			return err
+		}
+
+		fmt.Printf("[IVM Packer] Code Section: 0x%08X (Size: %d bytes)\n", elfBin.CodeAddr, len(elfBin.CodeBytes))
+		fmt.Printf("[IVM Packer] Translating ARMv8 instructions to Custom IVM ISA...\n")
+
+		res, err := armv8.TranslateELF(elfBin)
+		if err != nil {
+			return err
+		}
+
+		fmt.Printf("[IVM Packer] Translated %d ARMv8 instructions into %d IVM bytecode instructions.\n",
+			res.Stats.ARMInstructionCount, res.Stats.IVMInstructionCount)
+
+		if err := res.IVMFile.SaveToFile(outputFile); err != nil {
+			return err
+		}
+
+		fmt.Printf("[IVM Packer] Successfully packed into IVM container: %s\n", outputFile)
+		return nil
+	} else if archNorm == "armv7" {
+		fmt.Printf("[IVM Packer] Reading ARMv7 ELF binary: %s\n", inputFile)
+		elfBin, err := armv7.ParseELF(inputFile)
+		if err != nil {
+			return err
+		}
+
+		fmt.Printf("[IVM Packer] Code Section: 0x%08X (Size: %d bytes)\n", elfBin.CodeAddr, len(elfBin.CodeBytes))
+		fmt.Printf("[IVM Packer] Translating ARMv7 instructions to Custom IVM ISA...\n")
+
+		res, err := armv7.TranslateELF(elfBin)
+		if err != nil {
+			return err
+		}
+
+		fmt.Printf("[IVM Packer] Translated %d ARMv7 instructions into %d IVM bytecode instructions.\n",
+			res.Stats.ARMInstructionCount, res.Stats.IVMInstructionCount)
+
+		if err := res.IVMFile.SaveToFile(outputFile); err != nil {
+			return err
+		}
+
+		fmt.Printf("[IVM Packer] Successfully packed into IVM container: %s\n", outputFile)
+		return nil
 	}
 
-	fmt.Printf("[IVM Packer] Code Section: 0x%08X (Size: %d bytes)\n", elfBin.CodeAddr, len(elfBin.CodeBytes))
-	fmt.Printf("[IVM Packer] Translating ARMv7 instructions to Custom IVM ISA...\n")
-
-	res, err := armv7.TranslateELF(elfBin)
-	if err != nil {
-		return err
-	}
-
-	fmt.Printf("[IVM Packer] Translated %d ARMv7 instructions into %d IVM bytecode instructions.\n",
-		res.Stats.ARMInstructionCount, res.Stats.IVMInstructionCount)
-
-	if err := res.IVMFile.SaveToFile(outputFile); err != nil {
-		return err
-	}
-
-	fmt.Printf("[IVM Packer] Successfully packed into IVM container: %s\n", outputFile)
-	return nil
+	return fmt.Errorf("unsupported architecture '%s' (supported: armv7, armv8/aarch64)", arch)
 }
 
 func handleRun(ivmFilepath string, debug bool) error {
-	ivmFile, err := format.LoadFromFile(ivmFilepath)
+	ivmFile, err := vm.LoadFromFile(ivmFilepath)
 	if err != nil {
 		return err
 	}
@@ -221,7 +247,7 @@ func handleRun(ivmFilepath string, debug bool) error {
 }
 
 func handleDisasm(ivmFilepath string) error {
-	ivmFile, err := format.LoadFromFile(ivmFilepath)
+	ivmFile, err := vm.LoadFromFile(ivmFilepath)
 	if err != nil {
 		return err
 	}
@@ -238,11 +264,11 @@ func handleDisasm(ivmFilepath string) error {
 func printUsage() {
 	fmt.Print(Banner)
 	fmt.Println("Usage:")
-	fmt.Println("  ivm --pack [--arch armv7] [-o out.ivm] <binary>   Pack ARMv7 ELF binary into .ivm file")
-	fmt.Println("  ivm --run [--debug] <binary.ivm>                 Execute .ivm VM binary")
-	fmt.Println("  ivm --disasm <binary.ivm>                        Disassemble .ivm file")
+	fmt.Println("  ivm --pack [--arch armv7|armv8] [-o out.ivm] <binary>   Pack ARM ELF binary into .ivm file")
+	fmt.Println("  ivm --run [--debug] <binary.ivm>                       Execute .ivm VM binary")
+	fmt.Println("  ivm --disasm <binary.ivm>                              Disassemble .ivm file")
 	fmt.Println("\nSubcommands:")
-	fmt.Println("  ivm pack [--arch armv7] [-o out.ivm] <binary>")
+	fmt.Println("  ivm pack [--arch armv7|armv8] [-o out.ivm] <binary>")
 	fmt.Println("  ivm run [--debug] <binary.ivm>")
 	fmt.Println("  ivm disasm <binary.ivm>")
 }
