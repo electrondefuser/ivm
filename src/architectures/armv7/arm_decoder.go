@@ -213,6 +213,17 @@ func DecodeARM32(raw uint32) (*DecodedARM, error) {
 
 	// 7. Data Processing (cond | 00 | I | opcode | S | Rn | Rd | operand2)
 	if (raw & 0x0C000000) == 0x00000000 {
+		// MOVW (Move 16-bit immediate): cond | 0011 0000 | imm4 | Rd | imm12
+		if (raw & 0x0FF00000) == 0x03000000 {
+			dec.Op = vm.OpMOV
+			dec.HasImm = true
+			imm4 := (raw >> 16) & 0x0F
+			imm12 := raw & 0x0FFF
+			dec.Imm = (imm4 << 12) | imm12
+			dec.Rd = uint8((raw >> 12) & 0x0F)
+			return dec, nil
+		}
+
 		iBit := (raw & (1 << 25)) != 0
 		opCodeBits := (raw >> 21) & 0x0F
 		dec.SetFlags = (raw & (1 << 20)) != 0

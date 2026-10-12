@@ -101,7 +101,7 @@ func FormatInstruction(inst vm.Instruction, currAddr uint32) string {
 	case vm.OpCMP, vm.OpCMN, vm.OpTST, vm.OpTEQ:
 		return fmt.Sprintf("%-8s %s, %s", mnemonic, src1Reg, getOp2Str())
 
-	case vm.OpLDR, vm.OpLDRB, vm.OpLDRH, vm.OpLDRSB, vm.OpLDRSH:
+	case vm.OpLDR, vm.OpLDRB, vm.OpLDRH, vm.OpLDRSB, vm.OpLDRSH, vm.OpLDRSW:
 		return fmt.Sprintf("%-8s %s, [%s, %s]", mnemonic, dstReg, src1Reg, getOp2Str())
 
 	case vm.OpLDRL:

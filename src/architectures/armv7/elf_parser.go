@@ -73,7 +73,18 @@ func ParseELF(filepath string) (*ELFBinary, error) {
 	}
 
 	if res.Entry == 0 {
-		res.Entry = res.CodeAddr
+		symbols, _ := elfFile.Symbols()
+		for _, sym := range symbols {
+			if sym.Name == "_start" || (res.Entry == 0 && sym.Name == "main") {
+				res.Entry = res.CodeAddr + uint32(sym.Value)
+				if sym.Name == "_start" {
+					break
+				}
+			}
+		}
+		if res.Entry == 0 {
+			res.Entry = res.CodeAddr
+		}
 	}
 
 	// Consolidate data sections

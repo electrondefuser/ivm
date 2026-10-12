@@ -124,6 +124,7 @@ const (
 	OpSTP     Opcode = 0x23
 	OpLDP     Opcode = 0x24
 	OpLDRL    Opcode = 0x25
+	OpLDRSW   Opcode = 0x26
 	OpESCAPE  Opcode = 0xFD
 	OpHALT    Opcode = 0xFE
 	OpILLEGAL Opcode = 0xFF
@@ -208,6 +209,8 @@ func (op Opcode) String() string {
 		return "LDP"
 	case OpLDRL:
 		return "LDR"
+	case OpLDRSW:
+		return "LDRSW"
 	case OpESCAPE:
 		return "ESCAPE"
 	case OpHALT:

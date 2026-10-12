@@ -6,9 +6,11 @@ import (
 	"runtime"
 )
 
-// HostBridge manages native execution fallback when the VM encounters an instruction
-// that is outside the standard virtualized ISA. It context-switches the VM state to
-// host CPU evaluation and restores updated registers and flags.
+/*
+ * HostBridge manages native execution fallback when the VM encounters an instruction
+ * that is outside the standard virtualized ISA. It context-switches the VM state to
+ * host CPU evaluation and restores updated registers and flags.
+ */
 type HostBridge struct {
 	Debug         bool
 	FallbackCount uint64
@@ -312,7 +314,9 @@ func (b *HostBridge) executeBlockTransfer(cpu *CPU, mem *Memory, raw uint32) err
 
 func (b *HostBridge) executeARMv8Fallback(cpu *CPU, mem *Memory, raw uint32, currPC uint32) error {
 	// 1. SDIV / UDIV (Integer Division)
-	if (raw & 0x7FE0FFE0) == 0x1AC00C00 { // SDIV
+
+	/* SDIV */
+	if (raw & 0x7FE0FFE0) == 0x1AC00C00 {
 		is64 := (raw & (1 << 31)) != 0
 		rd := uint8(raw & 0x1F)
 		rn := uint8((raw >> 5) & 0x1F)
@@ -334,7 +338,9 @@ func (b *HostBridge) executeARMv8Fallback(cpu *CPU, mem *Memory, raw uint32, cur
 		}
 		return nil
 	}
-	if (raw & 0x7FE0FFE0) == 0x1AC00800 { // UDIV
+
+	/* UDIV */
+	if (raw & 0x7FE0FFE0) == 0x1AC00800 {
 		is64 := (raw & (1 << 31)) != 0
 		rd := uint8(raw & 0x1F)
 		rn := uint8((raw >> 5) & 0x1F)

@@ -724,6 +724,12 @@ func (interp *Interpreter) stepARMv8(inst Instruction, pc, nextPC uint32) error 
 			}
 		}
 
+	case OpLDRSW:
+		base := getBaseAddr(inst.RegSrc1)
+		effAddr := base + inst.Imm
+		val := int64(int32(interp.Memory.Read32(effAddr)))
+		setReg64(inst.RegDst, uint64(val))
+
 	case OpSTR:
 		base := getBaseAddr(inst.RegSrc1)
 		effAddr := base + inst.Imm
@@ -767,6 +773,9 @@ func (interp *Interpreter) stepARMv8(inst Instruction, pc, nextPC uint32) error 
 		base := getBaseAddr(inst.RegSrc1)
 		offset := int64(int32(inst.Imm))
 		addr := uint32(int64(base) + offset)
+		if inst.ShiftType == 1 { // post-indexed access at base
+			addr = base
+		}
 		val1 := interp.CPU.GetReg64(inst.RegDst)
 		val2 := interp.CPU.GetReg64(inst.RegSrc2)
 		if inst.Is64Bit {
@@ -776,27 +785,30 @@ func (interp *Interpreter) stepARMv8(inst Instruction, pc, nextPC uint32) error 
 			interp.Memory.Write32(addr, uint32(val1))
 			interp.Memory.Write32(addr+4, uint32(val2))
 		}
-		if inst.RegSrc1 == 31 { // SP pre-indexed update
-			interp.CPU.SetReg64(31, uint64(addr))
+		if inst.SetFlags { // writeback requested (pre-index or post-index)
+			setReg64(inst.RegSrc1, uint64(int64(base)+offset))
 		}
 
 	case OpLDP:
 		base := getBaseAddr(inst.RegSrc1)
 		offset := int64(int32(inst.Imm))
-		addr := base
+		addr := uint32(int64(base) + offset)
+		if inst.ShiftType == 1 { // post-indexed access at base
+			addr = base
+		}
 		if inst.Is64Bit {
 			val1 := interp.Memory.Read64(addr)
-			val2 := interp.Memory.Read64(addr+8)
-			interp.CPU.SetReg64(inst.RegDst, val1)
-			interp.CPU.SetReg64(inst.RegSrc2, val2)
+			val2 := interp.Memory.Read64(addr + 8)
+			setReg64(inst.RegDst, val1)
+			setReg64(inst.RegSrc2, val2)
 		} else {
 			val1 := interp.Memory.Read32(addr)
-			val2 := interp.Memory.Read32(addr+4)
-			interp.CPU.SetReg(inst.RegDst, val1)
-			interp.CPU.SetReg(inst.RegSrc2, val2)
+			val2 := interp.Memory.Read32(addr + 4)
+			setReg64(inst.RegDst, uint64(val1))
+			setReg64(inst.RegSrc2, uint64(val2))
 		}
-		if inst.RegSrc1 == 31 { // SP post-indexed update
-			interp.CPU.SetReg64(31, uint64(int64(base)+offset))
+		if inst.SetFlags { // writeback requested (pre-index or post-index)
+			setReg64(inst.RegSrc1, uint64(int64(base)+offset))
 		}
 
 	case OpB:

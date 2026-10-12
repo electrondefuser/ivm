@@ -6,17 +6,18 @@ import (
 
 // DecodedARM8 represents a decoded 64-bit ARMv8 (AArch64) instruction
 type DecodedARM8 struct {
-	Op       vm.Opcode
-	Cond     uint8  // 0-14
-	SetFlags bool   // Updates N, Z, C, V
-	HasImm   bool   // True if immediate operand used
-	Is64Bit  bool   // True if 64-bit (X register), false if 32-bit (W register)
-	Rd       uint8  // 0-31
-	Rn       uint8  // 0-31
-	Rm       uint8  // 0-31
-	Rt2      uint8  // Second register for STP / LDP
-	Imm      uint64 // Immediate value or target PC address
-	Raw      uint32 // Original 32-bit machine instruction
+	Op        vm.Opcode
+	Cond      uint8  // 0-14
+	SetFlags  bool   // Updates N, Z, C, V
+	HasImm    bool   // True if immediate operand used
+	Is64Bit   bool   // True if 64-bit (X register), false if 32-bit (W register)
+	Rd        uint8  // 0-31
+	Rn        uint8  // 0-31
+	Rm        uint8  // 0-31
+	Rt2       uint8  // Second register for STP / LDP
+	ShiftType uint8  // 0 for standard offset / pre-index, 1 for post-index
+	Imm       uint64 // Immediate value or target PC address
+	Raw       uint32 // Original 32-bit machine instruction
 }
 
 func signExtend26(val uint32) int64 {
@@ -38,6 +39,13 @@ func signExtend07(val uint32) int64 {
 		return int64(int32(val | 0xFFFFFF80))
 	}
 	return int64(val & 0x7F)
+}
+
+func signExtend09(val uint32) int64 {
+	if (val & 0x100) != 0 {
+		return int64(int32(val | 0xFFFFFE00))
+	}
+	return int64(val & 0x1FF)
 }
 
 // DecodeAArch64 decodes a 32-bit ARMv8 instruction into DecodedARM8
@@ -286,7 +294,7 @@ func DecodeAArch64(raw uint32, currPC uint32) (*DecodedARM8, error) {
 	}
 
 	// 14. STP / LDP (Store / Load Pair)
-	// STP X29, X30, [SP, #-16]! / LDP X29, X30, [SP], #16
+	// STP X29, X30, [SP, #-16]! / LDP X29, X30, [SP], #16 / STP X29, X30, [SP, #16]
 	if (raw & 0x3E000000) == 0x28000000 {
 		isLoad := (raw & (1 << 22)) != 0
 		dec.Is64Bit = (raw & (1 << 31)) != 0
@@ -302,6 +310,15 @@ func DecodeAArch64(raw uint32, currPC uint32) (*DecodedARM8, error) {
 		dec.Imm = uint64(signExtend07(imm7) << scale)
 		dec.HasImm = true
 
+		hasWriteback := (raw & (1 << 23)) != 0
+		isPostIndex := (raw&(1<<24)) == 0 && hasWriteback
+		dec.SetFlags = hasWriteback
+		if isPostIndex {
+			dec.ShiftType = 1
+		} else {
+			dec.ShiftType = 0
+		}
+
 		if isLoad {
 			dec.Op = vm.OpLDP
 		} else {
@@ -310,7 +327,46 @@ func DecodeAArch64(raw uint32, currPC uint32) (*DecodedARM8, error) {
 		return dec, nil
 	}
 
-	// 14. Fallback for unvirtualized ARMv8 instructions
+	// 15. Load / Store Register (Unscaled Signed Offset: LDUR / STUR / LDURSW)
+	// Mask: 0x3B200C00 == 0x38000000
+	if (raw & 0x3B200C00) == 0x38000000 {
+		dec.HasImm = true
+		size := (raw >> 30) & 0x03
+		opc := (raw >> 22) & 0x03
+		dec.Rd = uint8(raw & 0x1F)
+		dec.Rn = uint8((raw >> 5) & 0x1F)
+		imm9 := (raw >> 12) & 0x1FF
+		offset := signExtend09(imm9)
+		dec.Imm = uint64(uint32(offset))
+
+		if opc == 0 { // STUR
+			switch size {
+			case 0:
+				dec.Op = vm.OpSTRB
+			case 1:
+				dec.Op = vm.OpSTRH
+			case 2, 3:
+				dec.Op = vm.OpSTR
+				dec.Is64Bit = (size == 3)
+			}
+		} else if opc == 1 { // LDUR
+			switch size {
+			case 0:
+				dec.Op = vm.OpLDRB
+			case 1:
+				dec.Op = vm.OpLDRH
+			case 2, 3:
+				dec.Op = vm.OpLDR
+				dec.Is64Bit = (size == 3)
+			}
+		} else if opc == 2 { // LDURSW
+			dec.Op = vm.OpLDRSW
+			dec.Is64Bit = true
+		}
+		return dec, nil
+	}
+
+	// 16. Fallback for unvirtualized ARMv8 instructions
 	dec.Op = vm.OpESCAPE
 	dec.HasImm = true
 	dec.Imm = uint64(raw)

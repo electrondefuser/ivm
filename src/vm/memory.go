@@ -144,7 +144,8 @@ func (m *Memory) DumpHex(startAddr uint32, length uint32) string {
 	out := ""
 	for i := uint32(0); i < length; i += 16 {
 		out += fmt.Sprintf("0x%08X: ", startAddr+i)
-		for j := uint32(0); j < 16; j++ {
+
+		for j := range uint32(16) {
 			if i+j < length {
 				out += fmt.Sprintf("%02X ", m.Read8(startAddr+i+j))
 			} else {
